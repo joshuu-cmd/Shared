@@ -19,7 +19,7 @@ const activityDetail = document.getElementById('activityDetail');
 const matchModal = document.getElementById('matchModal');
 const activityContent = document.getElementById('activityContent');
 const matchContainer = document.getElementById('matchContainer');
-const state = { activity: null, teams: [], fixtures: [], currentExport: null, refreshing: false };
+const state = { activity: null, teams: [], fixtures: [], stadiums: [], referees: [], currentExport: null, refreshing: false };
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -72,12 +72,28 @@ async function loadTeams() {
 async function loadFootballFixtures() {
   const { data, error } = await supabaseClient
     .from('football_fixtures')
-    .select('id, gender, group_name, home_team_id, away_team_id, match_date, match_status, home_score, away_score, scorers, assists')
+    .select('id, gender, group_name, match_round, home_team_id, away_team_id, match_date, match_time, stadium_id, referee_id, match_status, home_score, away_score, scorers, assists')
     .order('gender')
     .order('group_name')
     .order('created_at');
   if (error) throw error;
   state.fixtures = data;
+}
+
+async function loadStadiums() {
+  const { data, error } = await supabaseClient.from('stadiums').select('id, name');
+  if (error) throw error;
+  state.stadiums = data;
+}
+
+async function loadReferees() {
+  const { data, error } = await supabaseClient.from('referees').select('id, name');
+  if (error) throw error;
+  state.referees = data;
+}
+
+function formatMatchTime(value) {
+  return /^\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(value || '') ? value.slice(0, 5) : '—';
 }
 
 function groupStandings() {
@@ -141,7 +157,7 @@ function renderStandings() {
   container.innerHTML = `<div class="group-cards-grid">${groups.map(group => `
     <section class="standing-group">
       <h3>${escapeHtml(group.gender)} — Group ${escapeHtml(group.group)}</h3>
-      <p class="privacy-note">Group stage is a round-robin. The top 2 teams in each group qualify for the knockout stages.</p>
+      <p class="privacy-note">Standings are calculated from played group fixtures. The top 2 teams in each group qualify for the knockout stages.</p>
       <div class="table-wrap"><table class="match-table standings-table">
         <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th><th>Knockout</th></tr></thead>
         <tbody>${group.teams.map((team, index) => `
@@ -158,18 +174,22 @@ function renderStandings() {
 
 function scorerRankings() {
   const players = new Map();
+  const teamsById = new Map(state.teams.map(team => [team.id, team]));
   state.fixtures.filter(fixture => fixture.match_status === 'played').forEach(fixture => {
     ['home', 'away'].forEach(side => {
       const records = fixture.scorers?.[side];
       if (!Array.isArray(records)) return;
       records.forEach(record => {
         const goals = Number(record?.goals);
-        if (!record || record.own_goal === true || record.participant_id == null
-            || !record.player?.trim() || !Number.isInteger(goals) || goals < 1) return;
+        if (!record || record.own_goal === true || !record.participant_id
+            || String(record.team_id) !== String(fixture[`${side}_team_id`])
+            || typeof record.player !== 'string' || !record.player.trim()
+            || !Number.isInteger(goals) || goals < 1) return;
         const id = String(record.participant_id);
         const current = players.get(id) || {
           id,
           name: record.player.trim(),
+          team: teamsById.get(fixture[`${side}_team_id`])?.team_name || 'Team unavailable',
           goals: 0,
         };
         current.goals += goals;
@@ -189,14 +209,15 @@ function renderScorerRankings() {
     return;
   }
   container.innerHTML = `<div class="table-wrap"><table class="match-table standings-table">
-    <thead><tr><th>Player</th><th>Goals</th></tr></thead>
+    <thead><tr><th>Player</th><th>Team</th><th>Goals</th></tr></thead>
     <tbody>${players.map(player => `<tr>
-      <td>${escapeHtml(player.name)}</td><td><strong>${player.goals}</strong></td>
+      <td>${escapeHtml(player.name)}</td><td>${escapeHtml(player.team)}</td><td><strong>${player.goals}</strong></td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
 function assistRankings() {
   const players = new Map();
+  const teamsById = new Map(state.teams.map(team => [team.id, team]));
   state.fixtures.filter(fixture => fixture.match_status === 'played').forEach(fixture => {
     ['home', 'away'].forEach(side => {
       const records = fixture.assists?.[side];
@@ -206,7 +227,12 @@ function assistRankings() {
           && record.player && Number.isInteger(record.assists) && record.assists > 0)
         .forEach(record => {
           const id = String(record.participant_id);
-          const current = players.get(id) || { id, name: record.player, assists: 0 };
+          const current = players.get(id) || {
+            id,
+            name: record.player,
+            team: teamsById.get(fixture[`${side}_team_id`])?.team_name || 'Team unavailable',
+            assists: 0,
+          };
           current.assists += record.assists;
           players.set(id, current);
         });
@@ -224,15 +250,17 @@ function renderAssistRankings() {
     return;
   }
   container.innerHTML = `<div class="table-wrap"><table class="match-table standings-table">
-    <thead><tr><th>Player</th><th>Assists</th></tr></thead>
+    <thead><tr><th>Player</th><th>Team</th><th>Assists</th></tr></thead>
     <tbody>${players.map(player => `<tr>
-      <td>${escapeHtml(player.name)}</td><td><strong>${player.assists}</strong></td>
+      <td>${escapeHtml(player.name)}</td><td>${escapeHtml(player.team)}</td><td><strong>${player.assists}</strong></td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
 function renderPublicFixtures() {
   const container = document.getElementById('publicFixturesContainer');
   const teamsById = new Map(state.teams.map(team => [team.id, team]));
+  const stadiumsById = new Map(state.stadiums.map(stadium => [stadium.id, stadium]));
+  const refereesById = new Map(state.referees.map(referee => [referee.id, referee]));
   const fixturesByGroup = new Map();
   state.fixtures.forEach(fixture => {
     const groupKey = `${fixture.gender}|${fixture.group_name}`;
@@ -242,7 +270,7 @@ function renderPublicFixtures() {
   });
 
   if (!fixturesByGroup.size) {
-    container.innerHTML = '<p class="empty-state">No group-stage fixtures yet. Register at least two football teams in the same gender and group.</p>';
+    container.innerHTML = '<p class="empty-state">No fixtures have been added yet. An administrator can create matchups after teams are registered.</p>';
     return;
   }
 
@@ -251,17 +279,26 @@ function renderPublicFixtures() {
     return `<section class="match-group-card">
       <h3>${escapeHtml(gender)} — Group ${escapeHtml(group)}</h3>
       <div class="table-wrap"><table class="match-table">
-        <thead><tr><th>Home Team</th><th>Away Team</th><th>Date</th><th>Result / status</th></tr></thead>
-        <tbody>${fixtures.map(fixture => {
+        <thead><tr><th>Round</th><th>Home Team</th><th>Away Team</th><th>Date</th><th>Time (Africa/Nairobi)</th><th>Venue</th><th>Referee</th><th>Result / status</th></tr></thead>
+        <tbody>${fixtures.sort((a, b) =>
+    (a.match_date || '9999-99-99').localeCompare(b.match_date || '9999-99-99')
+    || (a.match_time || '99:99').localeCompare(b.match_time || '99:99')
+  ).map(fixture => {
           const homeName = teamsById.get(fixture.home_team_id)?.team_name || 'Team removed';
           const awayName = teamsById.get(fixture.away_team_id)?.team_name || 'Team removed';
+          const stadiumName = stadiumsById.get(fixture.stadium_id)?.name || 'Not assigned';
+          const refereeName = refereesById.get(fixture.referee_id)?.name || 'Not assigned';
           const result = fixture.match_status === 'played'
             ? `${fixture.home_score}–${fixture.away_score}`
             : fixture.match_status === 'postponed' ? 'Postponed' : 'Scheduled';
           return `<tr>
+            <td>${escapeHtml(fixture.match_round)}</td>
             <td>${escapeHtml(homeName)}</td>
             <td>${escapeHtml(awayName)}</td>
             <td>${escapeHtml(fixture.match_date || 'Not scheduled')}</td>
+            <td>${escapeHtml(formatMatchTime(fixture.match_time))}</td>
+            <td>${escapeHtml(stadiumName)}</td>
+            <td>${escapeHtml(refereeName)}</td>
             <td>${escapeHtml(result)}</td>
           </tr>`;
         }).join('')}</tbody>
@@ -418,12 +455,25 @@ function readForm() {
   };
 }
 
+function normalizeStudentRegistrationNumber(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 async function submitRegistration() {
   const registration = readForm();
   if (!registration.team_name) {
     showToast('Please enter a team or activity name.');
     document.getElementById('teamName').focus();
     return;
+  }
+  if (registration.activity === 'Football') {
+    const registrationNumbers = registration.participants
+      .map(participant => normalizeStudentRegistrationNumber(participant['Student Registration Number']))
+      .filter(Boolean);
+    if (new Set(registrationNumbers).size !== registrationNumbers.length) {
+      showToast('Each football player must have a unique student registration number.');
+      return;
+    }
   }
   const button = document.getElementById('submitRegistrationBtn');
   button.disabled = true;
@@ -444,7 +494,10 @@ async function submitRegistration() {
     showToast('Team registration saved and shared.');
   } catch (error) {
     console.error('Could not save registration:', error);
-    showToast(`Could not save registration: ${error.message}`);
+    showToast(error.code === '23505'
+      && error.message.includes('registration_participants_student_registration_number_unique')
+      ? 'That student registration number is already registered on another football team.'
+      : `Could not save registration: ${error.message}`);
     button.disabled = false;
     button.textContent = 'Submit Registration';
   }
@@ -488,6 +541,8 @@ async function openMatchModal() {
   try {
     await loadTeams();
     await loadFootballFixtures();
+    await loadStadiums();
+    await loadReferees();
     renderStandings();
     renderPublicFixtures();
     renderScorerRankings();
@@ -506,14 +561,14 @@ async function openMatchModal() {
     matchContainer.innerHTML = [...groups.entries()].map(([key, rows]) => {
       const [gender, group] = key.split('|');
       return `<section class="match-group-card"><h3>${escapeHtml(gender)} — Group ${escapeHtml(group)}</h3>
-        <table class="match-table"><thead><tr><th>Home Team</th><th>Away Team</th><th>Date</th><th>Result / status</th><th>Goalscorers</th></tr></thead><tbody>
+        <table class="match-table"><thead><tr><th>Round</th><th>Home Team</th><th>Away Team</th><th>Date</th><th>Result / status</th><th>Goalscorers</th></tr></thead><tbody>
         ${rows.map(fixture => {
           const score = fixture.match_status === 'played'
             ? `${fixture.home_score}–${fixture.away_score}`
             : fixture.match_status === 'postponed' ? 'Postponed' : 'Scheduled';
           const scorers = fixture.match_status === 'played'
             ? `${scorerSummary(fixture.scorers, 'home', fixture.home_team_id, fixture.away_team_id)} / ${scorerSummary(fixture.scorers, 'away', fixture.away_team_id, fixture.home_team_id)}` : '—';
-          return `<tr><td>${escapeHtml(teamsById.get(fixture.home_team_id)?.team_name || 'Removed team')}</td>
+          return `<tr><td>${escapeHtml(fixture.match_round)}</td><td>${escapeHtml(teamsById.get(fixture.home_team_id)?.team_name || 'Removed team')}</td>
             <td>${escapeHtml(teamsById.get(fixture.away_team_id)?.team_name || 'Removed team')}</td>
             <td>${escapeHtml(fixture.match_date || 'Not scheduled')}</td><td>${escapeHtml(score)}</td><td>${scorers}</td></tr>`;
         }).join('')}
@@ -571,6 +626,8 @@ async function refreshPublicData() {
   try {
     await loadTeams();
     await loadFootballFixtures();
+    await loadStadiums();
+    await loadReferees();
     renderStandings();
     renderPublicFixtures();
     renderScorerRankings();
