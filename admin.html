@@ -70,6 +70,15 @@
           <div class="admin-section-heading">
             <div><h3 id="fixturesHeading">Football fixtures and results</h3><p>Create the matchups, assign a date, time (Africa/Nairobi), venue, and referee, then enter scores, goalscorers, and assists.</p></div>
           </div>
+          <div class="fixture-management-actions">
+            <div class="generate-fixtures-form">
+              <p><strong>Generate round-robin fixtures</strong> — Automatically create all unique matchups (every team plays every other team once) for selected groups in Round 1.</p>
+              <div class="generate-fixtures-inputs">
+                <label>Groups to generate<select id="generateFixturesGroups" multiple required><option value="">Select one or more groups</option></select></label>
+                <button id="generateRoundRobinBtn" class="primary-btn" type="button">Generate round-robin fixtures</button>
+              </div>
+            </div>
+          </div>
           <form id="addFixtureForm" class="manual-fixture-form">
             <label>Group<select id="newFixtureGroup" required><option value="">Select group</option></select></label>
             <label>Round<input id="newFixtureRound" type="number" min="1" step="1" value="1" required /></label>

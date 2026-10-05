@@ -103,6 +103,7 @@ async function refreshDashboard() {
   ` : '<p class="empty-state">No referees have been added yet.</p>';
 
   populateFixtureGroupOptions(teams);
+  populateGenerateFixturesGroups(teams);
   const fixtures = fixturesResult.data;
   const fixtureRows = fixtures.map(fixture => {
     const homeName = teamsById.get(fixture.home_team_id)?.team_name || 'Team removed';
@@ -628,6 +629,111 @@ function fixtureGroupKey(team) {
   return JSON.stringify([team.gender, team.group_name.trim().toUpperCase()]);
 }
 
+function populateGenerateFixturesGroups(teams) {
+  const select = document.getElementById('generateFixturesGroups');
+  const currentValues = Array.from(select.selectedOptions).map(opt => opt.value);
+  const groups = new Map();
+  teams.filter(team => team.activity === 'Football' && team.gender && team.group_name?.trim())
+    .forEach(team => groups.set(fixtureGroupKey(team), {
+      gender: team.gender,
+      group: team.group_name.trim(),
+    }));
+  select.innerHTML = `<option value="">Select groups</option>${[...groups.entries()]
+    .sort(([, a], [, b]) => a.gender.localeCompare(b.gender) || a.group.localeCompare(b.group))
+    .map(([key, group]) => `<option value="${escapeHtml(key)}">${escapeHtml(`${group.gender} — Group ${group.group}`)}</option>`)
+    .join('')}`;
+  currentValues.forEach(value => {
+    if (groups.has(value)) {
+      const option = select.querySelector(`option[value="${CSS.escape(value)}"]`);
+      if (option) option.selected = true;
+    }
+  });
+}
+
+async function generateRoundRobinFixtures(event) {
+  const button = event.currentTarget;
+  const select = document.getElementById('generateFixturesGroups');
+  const selectedValues = Array.from(select.selectedOptions).map(opt => opt.value);
+  
+  if (selectedValues.length === 0 || selectedValues[0] === '') {
+    setDashboardMessage('Select at least one group to generate fixtures for.', true);
+    return;
+  }
+  
+  const selectedGroups = selectedValues.map(value => {
+    try {
+      const [gender, groupName] = JSON.parse(value);
+      return { gender, groupName };
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  
+  if (!window.confirm(`Generate round-robin fixtures for ${selectedGroups.length} group(s)? This will create all unique matchups for Round 1.`)) return;
+  
+  button.disabled = true;
+  try {
+    let fixturesCreated = 0;
+    let fixturesSkipped = 0;
+    
+    for (const { gender, groupName } of selectedGroups) {
+      const groupTeams = adminTeams.filter(team =>
+        team.activity === 'Football'
+        && team.gender === gender
+        && team.group_name?.trim().toUpperCase() === groupName.toUpperCase()
+      );
+      
+      if (groupTeams.length < 2) {
+        setDashboardMessage(`Group ${gender} — ${groupName} has fewer than 2 teams. Skipping.`, true);
+        continue;
+      }
+      
+      const fixturesToInsert = [];
+      for (let i = 0; i < groupTeams.length; i++) {
+        for (let j = i + 1; j < groupTeams.length; j++) {
+          fixturesToInsert.push({
+            gender,
+            group_name: groupName.trim(),
+            match_round: 1,
+            home_team_id: groupTeams[i].id,
+            away_team_id: groupTeams[j].id,
+          });
+        }
+      }
+      
+      if (fixturesToInsert.length === 0) continue;
+      
+      const { data, error } = await supabaseClient
+        .from('football_fixtures')
+        .insert(fixturesToInsert)
+        .select('id');
+      
+      if (error) {
+        if (error.code === '23505') {
+          setDashboardMessage(`Some fixtures for Group ${gender} — ${groupName} already exist. Partial creation may have occurred.`, true);
+          fixturesSkipped += fixturesToInsert.length;
+        } else {
+          setDashboardMessage(`Could not generate fixtures for Group ${gender} — ${groupName}: ${error.message}`, true);
+        }
+      } else {
+        fixturesCreated += data?.length || fixturesToInsert.length;
+      }
+    }
+    
+    if (fixturesCreated > 0) {
+      setDashboardMessage(`${fixturesCreated} round-robin fixture(s) generated. Set their dates, times, stadiums, and referees in the schedule column.`);
+      select.value = '';
+      await refreshDashboard();
+    } else if (fixturesSkipped > 0) {
+      setDashboardMessage('No new fixtures were created (may already exist).', true);
+    }
+  } catch (error) {
+    setDashboardMessage(`Could not generate fixtures: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function populateFixtureGroupOptions(teams) {
   const select = document.getElementById('newFixtureGroup');
   const currentValue = select.value;
@@ -956,6 +1062,7 @@ function initializeAdmin() {
   document.getElementById('newFixtureHome').addEventListener('change', updateFixtureTeamOptions);
   document.getElementById('newFixtureAway').addEventListener('change', updateFixtureTeamOptions);
   document.getElementById('addFixtureForm').addEventListener('submit', addFixture);
+  document.getElementById('generateRoundRobinBtn').addEventListener('click', generateRoundRobinFixtures);
   document.getElementById('clearUnplayedFixturesBtn').addEventListener('click', clearUnplayedFixtures);
   setLoginMessage('Ready to sign in.');
 

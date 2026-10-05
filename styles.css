@@ -1240,9 +1240,8 @@ a{
 
 .admin-page .fixture-management-actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  gap: 14px;
   margin: 0 0 14px;
   padding: 12px 14px;
   border: 1px solid #f0d6d6;
@@ -1255,6 +1254,42 @@ a{
   color: #735252;
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.admin-page .generate-fixtures-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-page .generate-fixtures-inputs {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.admin-page .generate-fixtures-inputs label {
+  flex: 1;
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-page .generate-fixtures-inputs select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #cbd9d0;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--admin-ink);
+  font-size: 0.9rem;
+}
+
+.admin-page .generate-fixtures-inputs button {
+  flex: 0 0 auto;
 }
 
 .admin-page .fixture-schedule-cell select,
@@ -1301,6 +1336,15 @@ a{
   .admin-page .fixture-management-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-page .generate-fixtures-inputs {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-page .generate-fixtures-inputs button {
+    width: 100%;
   }
 }
 
